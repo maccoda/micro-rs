@@ -2,7 +2,7 @@ use diesel;
 use diesel::prelude::*;
 use super::schema::tasks;
 
-#[derive(Deserialize, Serialize, Queryable)]
+#[derive(Deserialize, Serialize, Queryable, Clone)]
 pub struct Task {
     id: i32,
     task: String,
