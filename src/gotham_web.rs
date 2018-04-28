@@ -1,19 +1,19 @@
 use gotham;
 use gotham::router::Router;
 use gotham::router::builder::*;
-use gotham::state::State;
+use gotham::state::{FromState, State};
 use gotham::http::response::create_response;
-use gotham::handler::IntoResponse;
+use gotham::handler::{IntoHandlerError, IntoResponse};
 use gotham::pipeline::new_pipeline;
 use gotham::pipeline::single::single_pipeline;
 use gotham::handler::HandlerFuture;
 use gotham::middleware::Middleware;
-use hyper::{Response, StatusCode};
+use hyper::{Body, Response, StatusCode};
 use mime;
 use serde_json;
-use futures::future;
+use futures::{future, Future, Stream};
 
-use models::Task;
+use models::{Task, TaskList};
 use super::{init_pool, DbConn, Pool};
 
 use std::ops::Deref;
@@ -23,6 +23,15 @@ fn router() -> Router {
     build_router(chain, pipelines, |route| {
         route.get_or_head("/").to(index);
         route.get("/tasks").to(get_all_tasks);
+        route.post("/task").to(create_task);
+        route
+            .put("/task/:id")
+            .with_path_extractor::<PathId>()
+            .to(update_task);
+        route
+            .delete("/task/:id")
+            .with_path_extractor::<PathId>()
+            .to(delete_task);
     })
 }
 
@@ -65,6 +74,7 @@ fn index(state: State) -> (State, Response) {
     );
     (state, res)
 }
+
 impl IntoResponse for Task {
     fn into_response(self, state: &State) -> Response {
         create_response(
@@ -80,11 +90,77 @@ impl IntoResponse for Task {
     }
 }
 
-fn get_all_tasks(state: State) -> (State, Task) {
+impl IntoResponse for TaskList {
+    fn into_response(self, state: &State) -> Response {
+        create_response(
+            &state,
+            StatusCode::Ok,
+            Some((
+                serde_json::to_string(&self.list)
+                    .expect("serialized product")
+                    .into_bytes(),
+                mime::APPLICATION_JSON,
+            )),
+        )
+    }
+}
+
+fn get_all_tasks(state: State) -> (State, TaskList) {
     let conn = db_conn(&state).expect("Failed with DB connection");
-    let tasks = Task::all(&conn)[0].clone();
+    let tasks = TaskList {
+        list: Task::all(&conn),
+    };
     (state, tasks)
 }
+
+fn create_task(mut state: State) -> Box<HandlerFuture> {
+    let body = Body::take_from(&mut state)
+        .concat2()
+        .then(|full_body| match full_body {
+            Ok(valid_body) => {
+                let body_content = String::from_utf8(valid_body.to_vec()).unwrap();
+                let task = serde_json::from_str(&body_content).expect("Failed to deserialize");
+                let conn = db_conn(&state).expect("Failed with DB connection");
+                Task::create(&conn, task);
+                let res = create_response(&state, StatusCode::Ok, None);
+                future::ok((state, res))
+            }
+            Err(e) => return future::err((state, e.into_handler_error())),
+        });
+    Box::new(body)
+}
+
+#[derive(Deserialize, StateData, StaticResponseExtender)]
+struct PathId {
+    id: u32,
+}
+
+fn update_task(mut state: State) -> Box<HandlerFuture> {
+    let PathId { id } = PathId::take_from(&mut state);
+    let body = Body::take_from(&mut state)
+        .concat2()
+        .then(move |full_body| match full_body {
+            Ok(valid_body) => {
+                let body_content = String::from_utf8(valid_body.to_vec()).unwrap();
+                let task = serde_json::from_str(&body_content).expect("Failed to deserialize");
+                let conn = db_conn(&state).expect("Failed with DB connection");
+                Task::update(&conn, id as i32, task);
+                let res = create_response(&state, StatusCode::Ok, None);
+                future::ok((state, res))
+            }
+            Err(e) => return future::err((state, e.into_handler_error())),
+        });
+    Box::new(body)
+}
+
+fn delete_task(mut state: State) -> (State, Response) {
+    let PathId { id } = PathId::take_from(&mut state);
+    let conn = db_conn(&state).expect("Failed with DB connection");
+    Task::delete(&conn, id as i32);
+    let resp = create_response(&state, StatusCode::Ok, None);
+    (state, resp)
+}
+
 pub fn start() {
     let addr = "127.0.0.1:8000";
     println!("Listening for requests at http://{}", addr);

@@ -2,6 +2,10 @@ use diesel;
 use diesel::prelude::*;
 use super::schema::tasks;
 
+#[derive(Deserialize, Serialize)]
+pub struct TaskList {
+    pub list: Vec<Task>,
+}
 #[derive(Deserialize, Serialize, Queryable, Clone)]
 pub struct Task {
     id: i32,
@@ -23,9 +27,9 @@ impl Task {
             .expect("Unable to insert");
     }
 
-    pub fn update(conn: &PgConnection, task_update: Task) -> i32 {
+    pub fn update(conn: &PgConnection, task_id: i32, task_update: Task) -> i32 {
         use schema::tasks::dsl::*;
-        diesel::update(tasks.find(task_update.id))
+        diesel::update(tasks.find(task_id))
             .set((
                 task.eq(task_update.task),
                 completed.eq(task_update.completed),

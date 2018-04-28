@@ -1,5 +1,4 @@
 use rocket_contrib::{Json, Value};
-use diesel::prelude::*;
 use rocket;
 use rocket::http::Status;
 use rocket::request::{self, FromRequest};
@@ -26,7 +25,7 @@ fn create_task(task: Json<NewTask>, conn: DbConn) -> Json<String> {
 
 #[put("/<id>", data = "<task>")]
 fn update_task(id: u32, task: Json<Task>, conn: DbConn) -> Json<i32> {
-    let id = Task::update(&conn, task.into_inner());
+    let id = Task::update(&conn, id as i32, task.into_inner());
     Json(id)
 }
 
