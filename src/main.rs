@@ -33,11 +33,6 @@ mod gotham_web;
 mod schema;
 mod models;
 
-enum Backend {
-    Rocket,
-    Gotham,
-}
-
 // An alias to the type for a pool of Diesel SQLite connections.
 
 type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
@@ -59,9 +54,15 @@ impl Deref for DbConn {
     }
 }
 fn main() {
-    let framework = Backend::Gotham;
-    match framework {
-        Backend::Rocket => rocket_web::start(),
-        Backend::Gotham => gotham_web::start(),
+    let arg = env::args()
+        .nth(1)
+        .expect("Did not define which framework to use")
+        .to_lowercase();
+    if arg.eq("gotham") {
+        gotham_web::start();
+    } else if arg.eq("rocket") {
+        rocket_web::start();
+    } else {
+        println!("No framework supported for {}", arg);
     }
 }
