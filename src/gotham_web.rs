@@ -113,21 +113,30 @@ fn get_all_tasks(state: State) -> (State, TaskList) {
     (state, tasks)
 }
 
-fn create_task(mut state: State) -> Box<HandlerFuture> {
+fn body_handler<F>(mut state: State, f: F) -> Box<HandlerFuture>
+where
+    F: 'static + Fn(String, &State) -> Response,
+{
     let body = Body::take_from(&mut state)
         .concat2()
-        .then(|full_body| match full_body {
+        .then(move |full_body| match full_body {
             Ok(valid_body) => {
                 let body_content = String::from_utf8(valid_body.to_vec()).unwrap();
-                let task = serde_json::from_str(&body_content).expect("Failed to deserialize");
-                let conn = db_conn(&state).expect("Failed with DB connection");
-                Task::create(&conn, task);
-                let res = create_response(&state, StatusCode::Ok, None);
+                let res = f(body_content, &mut state);
                 future::ok((state, res))
             }
             Err(e) => return future::err((state, e.into_handler_error())),
         });
     Box::new(body)
+}
+
+fn create_task(state: State) -> Box<HandlerFuture> {
+    body_handler(state, |s, state| {
+        let task = serde_json::from_str(&s).expect("Failed to deserialize");
+        let conn = db_conn(state).expect("Failed with DB connection");
+        Task::create(&conn, task);
+        create_response(state, StatusCode::Ok, None)
+    })
 }
 
 #[derive(Deserialize, StateData, StaticResponseExtender)]
@@ -137,20 +146,12 @@ struct PathId {
 
 fn update_task(mut state: State) -> Box<HandlerFuture> {
     let PathId { id } = PathId::take_from(&mut state);
-    let body = Body::take_from(&mut state)
-        .concat2()
-        .then(move |full_body| match full_body {
-            Ok(valid_body) => {
-                let body_content = String::from_utf8(valid_body.to_vec()).unwrap();
-                let task = serde_json::from_str(&body_content).expect("Failed to deserialize");
-                let conn = db_conn(&state).expect("Failed with DB connection");
-                Task::update(&conn, id as i32, task);
-                let res = create_response(&state, StatusCode::Ok, None);
-                future::ok((state, res))
-            }
-            Err(e) => return future::err((state, e.into_handler_error())),
-        });
-    Box::new(body)
+    body_handler(state, move |s, state| {
+        let task = serde_json::from_str(&s).expect("Failed to deserialize");
+        let conn = db_conn(&state).expect("Failed with DB connection");
+        Task::update(&conn, id as i32, task);
+        create_response(state, StatusCode::Ok, None)
+    })
 }
 
 fn delete_task(mut state: State) -> (State, Response) {
